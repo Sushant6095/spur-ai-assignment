@@ -30,17 +30,19 @@ export function useChatWebSocket(initialSessionId?: string) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Initialize WebSocket connection
+  // Initialize WebSocket connection immediately (don't wait for sessionId)
   useEffect(() => {
-    if (!sessionId) return;
-
     const socket = io(`${API_BASE}/chat`, {
-      query: { sessionId },
+      query: sessionId ? { sessionId } : {},
       transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5,
     });
 
     socket.on('connect', () => {
       setIsConnected(true);
+      setError(null);
       console.log('WebSocket connected');
     });
 
@@ -50,7 +52,8 @@ export function useChatWebSocket(initialSessionId?: string) {
     });
 
     socket.on('connect_error', (err) => {
-      setError('Connection error. Please refresh.');
+      setIsConnected(false);
+      setError('Connection error. Please check if backend is running.');
       console.error('WebSocket error:', err);
     });
 
@@ -82,6 +85,26 @@ export function useChatWebSocket(initialSessionId?: string) {
       );
       setThinking(false);
       setIsSending(false);
+      
+      // Update sessionId if provided
+      if (message.sessionId) {
+        setSessionId(message.sessionId);
+      }
+      
+      // Handle errors
+      if (message.error) {
+        setError(message.content || 'An error occurred');
+        setMessages((prev) => prev.filter((m) => !m.isStreaming));
+      }
+    });
+    
+    // Listen for error events
+    socket.on('error', (errorData: { message: string; details?: string }) => {
+      setError(errorData.message || 'Connection error occurred');
+      setThinking(false);
+      setIsSending(false);
+      setMessages((prev) => prev.filter((m) => !m.isStreaming));
+      console.error('Socket error:', errorData);
     });
 
     // Listen for typing indicators
@@ -91,9 +114,21 @@ export function useChatWebSocket(initialSessionId?: string) {
 
     socketRef.current = socket;
 
+    // Update query when sessionId changes
+    if (sessionId) {
+      socket.io.opts.query = { sessionId };
+    }
+
     return () => {
       socket.disconnect();
     };
+  }, []); // Connect once on mount
+
+  // Update socket query when sessionId changes
+  useEffect(() => {
+    if (socketRef.current && sessionId) {
+      socketRef.current.io.opts.query = { sessionId };
+    }
   }, [sessionId]);
 
   const loadHistory = useCallback(async (existingSessionId: string) => {
@@ -120,7 +155,13 @@ export function useChatWebSocket(initialSessionId?: string) {
   }, []);
 
   const sendMessage = useCallback(async () => {
-    if (!input.trim() || isSending || !socketRef.current) return;
+    if (!input.trim() || isSending) return;
+    
+    // Check connection
+    if (!socketRef.current || !isConnected) {
+      setError('Not connected to server. Please wait...');
+      return;
+    }
     
     setIsSending(true);
     setThinking(true);
@@ -137,24 +178,15 @@ export function useChatWebSocket(initialSessionId?: string) {
     ]);
 
     try {
-      // Ensure we have a session ID
+      // Ensure we have a session ID - create one if needed
       let currentSessionId = sessionId;
-      if (!currentSessionId) {
-        // Create session by making a request
-        const res = await fetch(`${API_BASE}/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: userContent }),
+      if (!currentSessionId && socketRef.current) {
+        // Send message without sessionId - backend will create one
+        socketRef.current.emit('sendMessage', {
+          content: userContent,
         });
-        const newSessionId = res.headers.get('x-session-id');
-        if (newSessionId) {
-          currentSessionId = newSessionId;
-          setSessionId(newSessionId);
-        }
-      }
-
-      // Send message via WebSocket
-      if (socketRef.current && currentSessionId) {
+      } else if (socketRef.current && currentSessionId) {
+        // Send message via WebSocket with sessionId
         socketRef.current.emit('sendMessage', {
           sessionId: currentSessionId,
           content: userContent,
@@ -166,7 +198,7 @@ export function useChatWebSocket(initialSessionId?: string) {
       setThinking(false);
       setIsSending(false);
     }
-  }, [input, isSending, sessionId]);
+  }, [input, isSending, sessionId, isConnected]);
 
   const handleTyping = useCallback(() => {
     if (!socketRef.current || !sessionId) return;
