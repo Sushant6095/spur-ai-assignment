@@ -16,8 +16,7 @@ export class ChatController {
   // WebSocket endpoint (recommended)
   @Post('ws')
   async createWebSocket(@Body() dto: CreateMessageDto) {
-    const sessionId = dto.sessionId || undefined;
-    return this.chatService.streamChatWebSocket(sessionId, dto.content);
+    return this.chatService.streamChatWebSocket(dto.sessionId, dto.content);
   }
 
   @Get(':sessionId')

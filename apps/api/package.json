@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "license": "MIT",
-  "type": "module",
   "scripts": {
     "start": "nest start",
     "dev": "nest start --watch",
@@ -15,6 +14,7 @@
     "prisma:seed": "ts-node ../..//prisma/seed.ts"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^3.2.0",
     "@nestjs/core": "^10.0.0",
@@ -44,4 +44,3 @@
     "typescript": "^5.4.0"
   }
 }
-

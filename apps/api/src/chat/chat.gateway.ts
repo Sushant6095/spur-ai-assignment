@@ -26,7 +26,7 @@ interface TypingEvent {
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   private readonly logger = new Logger(ChatGateway.name);
   private readonly activeSessions = new Map<string, Set<string>>(); // sessionId -> Set of socketIds
@@ -107,18 +107,65 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('sendMessage')
   async handleSendMessage(
-    @MessageBody() data: { sessionId: string; content: string },
+    @MessageBody() data: { sessionId?: string; content: string },
     @ConnectedSocket() client: Socket,
   ) {
     const { sessionId, content } = data;
+    let currentSessionId = sessionId;
     
-    // Process message via chat service with callbacks
-    await this.chatService.streamChatWebSocket(
-      sessionId,
-      content,
-      (chunk) => this.emitStreamChunk(sessionId, chunk),
-      (message) => this.emitStreamComplete(sessionId, message),
-    );
+    try {
+      // Process message via chat service with callbacks
+      // The service will create a session if sessionId is not provided
+      const result = await this.chatService.streamChatWebSocket(
+        sessionId,
+        content,
+        (chunk) => {
+          // Emit to client directly
+          client.emit('streamChunk', chunk);
+        },
+        (message) => {
+          // Include sessionId in the complete message
+          client.emit('streamComplete', message);
+        },
+      );
+      
+      // Update sessionId if it was created
+      if (result?.sessionId) {
+        currentSessionId = result.sessionId;
+        
+        // If we have a new sessionId, join the room and update connection
+        if (!sessionId) {
+          client.join(`session:${currentSessionId}`);
+          if (!this.activeSessions.has(currentSessionId)) {
+            this.activeSessions.set(currentSessionId, new Set());
+          }
+          this.activeSessions.get(currentSessionId)!.add(client.id);
+          client.handshake.query.sessionId = currentSessionId;
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error('Error handling sendMessage', {
+        message: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined,
+        sessionId: currentSessionId,
+      });
+      
+      // Emit error to client
+      client.emit('error', { 
+        message: 'Failed to process message',
+        details: errorMessage,
+      });
+      
+      // Also emit as streamComplete so frontend can handle it
+      client.emit('streamComplete', {
+        id: 'error',
+        role: 'assistant',
+        content: 'Sorry, I encountered an error processing your message. Please try again.',
+        error: true,
+        sessionId: currentSessionId,
+      });
+    }
   }
 
   // Method to emit new message to session room
