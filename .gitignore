@@ -1,5 +1,20 @@
 .env
-.FEATURES.md
-.SETUP.md
-.ADVANCED_FEATURES_SUMMARY.md
-.node_modules
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.next/
+
+# Next.js
+next-env.d.ts
+
+# Logs
+npm-debug.log*
+
+# Documentation (ignore all .md files except README.md)
+*.md
+!README.md
