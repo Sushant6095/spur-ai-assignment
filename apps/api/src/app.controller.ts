@@ -41,7 +41,7 @@ export class AppController {
   @Get('test-gemini')
   async testGemini() {
     const apiKey = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const modelName = 'gemini-1.5-flash'; // Free tier model only
     
     if (!apiKey || apiKey === 'your-gemini-api-key-here') {
       return {
@@ -51,13 +51,12 @@ export class AppController {
       };
     }
 
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+
     try {
-      const { GoogleGenerativeAI } = await import('@google/generative-ai');
-      const genAI = new GoogleGenerativeAI(apiKey);
-      
-      // Try to generate a simple response
       const geminiModel = genAI.getGenerativeModel({ 
-        model: model,
+        model: modelName,
         generationConfig: {
           maxOutputTokens: 50,
         },
@@ -70,10 +69,11 @@ export class AppController {
       return {
         status: 'success',
         message: 'Gemini API is working correctly!',
-        model: model,
+        model: modelName,
         apiKeyPresent: true,
         apiKeyLength: apiKey.length,
         testResponse: text,
+        note: 'Using free tier model: gemini-1.5-flash',
       };
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -82,15 +82,15 @@ export class AppController {
       return {
         status: 'error',
         message: 'Gemini API test failed',
-        model: model,
+        model: modelName,
         apiKeyPresent: true,
         apiKeyLength: apiKey.length,
         error: errorMessage,
         errorCode: errorCode,
         suggestions: [
           'Check if API key is valid at https://makersuite.google.com/app/apikey',
-          'Try setting GEMINI_MODEL=gemini-1.5-flash in .env',
-          'Verify API key has proper permissions',
+          'Verify API key has proper permissions for gemini-1.5-flash',
+          'Ensure you are using a free tier API key from Google AI Studio',
         ],
       };
     }

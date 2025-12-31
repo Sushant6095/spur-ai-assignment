@@ -83,112 +83,77 @@ export class ChatService {
         parts: [{ text: msg.content }],
       }));
 
-      // Get model - prioritize gemini-1.5-flash as it's most accessible
-      let modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-      
-      // Remove -latest suffix if present (not needed for Gemini API)
-      if (modelName.endsWith('-latest')) {
-        modelName = modelName.replace('-latest', '');
-        this.logger.warn(`Model name corrected: removed -latest suffix -> ${modelName}`);
-      }
-      
-      // Try models in order of accessibility (flash is most accessible)
-      const modelAttempts = [
-        'gemini-1.5-flash',  // Most accessible, try first
-        'gemini-1.5-pro',
-        'gemini-pro',
-      ];
-      
-      // If user specified a model, try it first
-      if (process.env.GEMINI_MODEL && modelAttempts.includes(process.env.GEMINI_MODEL)) {
-        modelAttempts.unshift(process.env.GEMINI_MODEL);
-        // Remove duplicate
-        const uniqueModels = [...new Set(modelAttempts)];
-        modelAttempts.length = 0;
-        modelAttempts.push(...uniqueModels);
-      }
+      // Use only gemini-1.5-flash (free tier model)
+      const modelName = 'gemini-1.5-flash';
+      this.logger.log(`🔄 Using model: ${modelName} (free tier)`);
       
       let result;
       let lastError: Error | null = null;
-      let successfulModel: string | null = null;
       
-      // Try each model with different approaches
-      for (const attemptModel of modelAttempts) {
+      // Try with different approaches
+      try {
+        // Try approach 1: Simple generation without history (most reliable)
         try {
-          this.logger.log(`🔄 Attempting model: ${attemptModel}`);
+          const fullPrompt = [
+            SYSTEM_PROMPT,
+            ...orderedHistory.map((msg: Message) => 
+              `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+            ),
+            `User: ${dto.content.trim()}`,
+            'Assistant:',
+          ].join('\n\n');
           
-          // Try approach 1: Simple generation without history (most reliable)
-          try {
-            const fullPrompt = [
-              SYSTEM_PROMPT,
-              ...orderedHistory.map((msg: Message) => 
-                `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-              ),
-              `User: ${dto.content.trim()}`,
-              'Assistant:',
-            ].join('\n\n');
-            
-            const model = this.gemini.getGenerativeModel({ 
-              model: attemptModel,
-              generationConfig: {
-                temperature: 0.2,
-                maxOutputTokens: 300,
-              },
-            });
+          const model = this.gemini.getGenerativeModel({ 
+            model: modelName,
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 300,
+            },
+          });
 
-            result = await model.generateContentStream(fullPrompt);
-            successfulModel = attemptModel;
-            this.logger.log(`✅ Successfully using model: ${attemptModel} (simple generation)`);
-            break;
-          } catch (simpleError) {
-            // If simple generation fails, try with chat history
-            this.logger.debug(`Simple generation failed for ${attemptModel}, trying with chat history...`);
-            
-            try {
-              const model = this.gemini.getGenerativeModel({ 
-                model: attemptModel,
-                generationConfig: {
-                  temperature: 0.2,
-                  maxOutputTokens: 300,
-                },
-                systemInstruction: SYSTEM_PROMPT,
-              });
+          result = await model.generateContentStream(fullPrompt);
+          this.logger.log(`✅ Successfully using model: ${modelName} (simple generation)`);
+        } catch (simpleError) {
+          // If simple generation fails, try with chat history
+          this.logger.debug(`Simple generation failed, trying with chat history...`);
+          
+          const model = this.gemini.getGenerativeModel({ 
+            model: modelName,
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 300,
+            },
+            systemInstruction: SYSTEM_PROMPT,
+          });
 
-              const chat = model.startChat({
-                history: conversationHistory,
-              });
+          const chat = model.startChat({
+            history: conversationHistory,
+          });
 
-              result = await chat.sendMessageStream(dto.content.trim());
-              successfulModel = attemptModel;
-              this.logger.log(`✅ Successfully using model: ${attemptModel} (with chat history)`);
-              break;
-            } catch (chatError) {
-              lastError = chatError instanceof Error ? chatError : new Error(String(chatError));
-              this.logger.warn(`❌ Model ${attemptModel} failed: ${lastError.message}`);
-              continue;
-            }
-          }
-        } catch (error) {
-          lastError = error instanceof Error ? error : new Error(String(error));
-          this.logger.warn(`❌ Model ${attemptModel} failed: ${lastError.message}`);
-          continue;
+          result = await chat.sendMessageStream(dto.content.trim());
+          this.logger.log(`✅ Successfully using model: ${modelName} (with chat history)`);
         }
-      }
-      
-      if (!result || !successfulModel) {
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.logger.error(`❌ Model ${modelName} failed: ${lastError.message}`);
+        
         // Log detailed error information
-        const errorDetails = lastError ? {
+        const errorDetails = {
           message: lastError.message,
           stack: lastError.stack,
           name: lastError.name,
-        } : 'Unknown error';
+        };
         
-        this.logger.error('❌ All model attempts failed', errorDetails);
-        this.logger.error(`   Tried models: ${modelAttempts.join(', ')}`);
+        this.logger.error('❌ Model initialization failed', errorDetails);
+        this.logger.error(`   Model: ${modelName}`);
         this.logger.error(`   API Key present: ${!!process.env.GEMINI_API_KEY}`);
         this.logger.error(`   API Key length: ${process.env.GEMINI_API_KEY?.length || 0}`);
         
-        throw lastError || new Error('Failed to initialize any Gemini model');
+        throw lastError || new Error(`Failed to initialize ${modelName}`);
+      }
+      
+      if (!result) {
+        throw lastError || new Error(`Failed to initialize ${modelName}`);
       }
       let assistantText = '';
 
@@ -323,112 +288,77 @@ export class ChatService {
         parts: [{ text: msg.content }],
       }));
 
-      // Get model - prioritize gemini-1.5-flash as it's most accessible
-      let modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-      
-      // Remove -latest suffix if present (not needed for Gemini API)
-      if (modelName.endsWith('-latest')) {
-        modelName = modelName.replace('-latest', '');
-        this.logger.warn(`Model name corrected: removed -latest suffix -> ${modelName}`);
-      }
-      
-      // Try models in order of accessibility (flash is most accessible)
-      const modelAttempts = [
-        'gemini-1.5-flash',  // Most accessible, try first
-        'gemini-1.5-pro',
-        'gemini-pro',
-      ];
-      
-      // If user specified a model, try it first
-      if (process.env.GEMINI_MODEL && modelAttempts.includes(process.env.GEMINI_MODEL)) {
-        modelAttempts.unshift(process.env.GEMINI_MODEL);
-        // Remove duplicate
-        const uniqueModels = [...new Set(modelAttempts)];
-        modelAttempts.length = 0;
-        modelAttempts.push(...uniqueModels);
-      }
+      // Use only gemini-1.5-flash (free tier model)
+      const modelName = 'gemini-1.5-flash';
+      this.logger.log(`🔄 Using model: ${modelName} (free tier)`);
       
       let result;
       let lastError: Error | null = null;
-      let successfulModel: string | null = null;
       
-      // Try each model with different approaches
-      for (const attemptModel of modelAttempts) {
+      // Try with different approaches
+      try {
+        // Try approach 1: Simple generation without history (most reliable)
         try {
-          this.logger.log(`🔄 Attempting model: ${attemptModel}`);
+          const fullPrompt = [
+            SYSTEM_PROMPT,
+            ...orderedHistory.map((msg: Message) => 
+              `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+            ),
+            `User: ${content.trim()}`,
+            'Assistant:',
+          ].join('\n\n');
           
-          // Try approach 1: Simple generation without history (most reliable)
-          try {
-            const fullPrompt = [
-              SYSTEM_PROMPT,
-              ...orderedHistory.map((msg: Message) => 
-                `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-              ),
-              `User: ${content.trim()}`,
-              'Assistant:',
-            ].join('\n\n');
-            
-            const model = this.gemini.getGenerativeModel({ 
-              model: attemptModel,
-              generationConfig: {
-                temperature: 0.2,
-                maxOutputTokens: 300,
-              },
-            });
+          const model = this.gemini.getGenerativeModel({ 
+            model: modelName,
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 300,
+            },
+          });
 
-            result = await model.generateContentStream(fullPrompt);
-            successfulModel = attemptModel;
-            this.logger.log(`✅ Successfully using model: ${attemptModel} (simple generation)`);
-            break;
-          } catch (simpleError) {
-            // If simple generation fails, try with chat history
-            this.logger.debug(`Simple generation failed for ${attemptModel}, trying with chat history...`);
-            
-            try {
-              const model = this.gemini.getGenerativeModel({ 
-                model: attemptModel,
-                generationConfig: {
-                  temperature: 0.2,
-                  maxOutputTokens: 300,
-                },
-                systemInstruction: SYSTEM_PROMPT,
-              });
+          result = await model.generateContentStream(fullPrompt);
+          this.logger.log(`✅ Successfully using model: ${modelName} (simple generation)`);
+        } catch (simpleError) {
+          // If simple generation fails, try with chat history
+          this.logger.debug(`Simple generation failed, trying with chat history...`);
+          
+          const model = this.gemini.getGenerativeModel({ 
+            model: modelName,
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 300,
+            },
+            systemInstruction: SYSTEM_PROMPT,
+          });
 
-              const chat = model.startChat({
-                history: conversationHistory,
-              });
+          const chat = model.startChat({
+            history: conversationHistory,
+          });
 
-              result = await chat.sendMessageStream(content.trim());
-              successfulModel = attemptModel;
-              this.logger.log(`✅ Successfully using model: ${attemptModel} (with chat history)`);
-              break;
-            } catch (chatError) {
-              lastError = chatError instanceof Error ? chatError : new Error(String(chatError));
-              this.logger.warn(`❌ Model ${attemptModel} failed: ${lastError.message}`);
-              continue;
-            }
-          }
-        } catch (error) {
-          lastError = error instanceof Error ? error : new Error(String(error));
-          this.logger.warn(`❌ Model ${attemptModel} failed: ${lastError.message}`);
-          continue;
+          result = await chat.sendMessageStream(content.trim());
+          this.logger.log(`✅ Successfully using model: ${modelName} (with chat history)`);
         }
-      }
-      
-      if (!result || !successfulModel) {
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.logger.error(`❌ Model ${modelName} failed: ${lastError.message}`);
+        
         // Log detailed error information
-        const errorDetails = lastError ? {
+        const errorDetails = {
           message: lastError.message,
           stack: lastError.stack,
           name: lastError.name,
-        } : 'Unknown error';
+        };
         
-        this.logger.error('❌ All model attempts failed', errorDetails);
-        this.logger.error(`   Tried models: ${modelAttempts.join(', ')}`);
+        this.logger.error('❌ Model initialization failed', errorDetails);
+        this.logger.error(`   Model: ${modelName}`);
         this.logger.error(`   API Key present: ${!!process.env.GEMINI_API_KEY}`);
         this.logger.error(`   API Key length: ${process.env.GEMINI_API_KEY?.length || 0}`);
         
-        throw lastError || new Error('Failed to initialize any Gemini model');
+        throw lastError || new Error(`Failed to initialize ${modelName}`);
+      }
+      
+      if (!result) {
+        throw lastError || new Error(`Failed to initialize ${modelName}`);
       }
       let assistantText = '';
 
