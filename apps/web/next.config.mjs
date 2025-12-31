@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  // Remove 'standalone' output for Vercel deployment
+  // output: 'standalone', // Only use for Docker deployments
   experimental: {
     typedRoutes: true,
   },
