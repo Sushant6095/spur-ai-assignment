@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Test - Socket.io</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e5e5e5;
+        }
+        .container {
+            background: #0f0f0f;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #2a2a2a;
+        }
+        button {
+            background: #3a3a3a;
+            color: #e5e5e5;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #4a4a4a;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .connected {
+            background: #22c55e;
+            color: white;
+        }
+        .disconnected {
+            background: #ef4444;
+            color: white;
+        }
+        .log {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            border: 1px solid #2a2a2a;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+        }
+        .log-info {
+            color: #60a5fa;
+        }
+        .log-success {
+            color: #22c55e;
+        }
+        .log-error {
+            color: #ef4444;
+        }
+        .log-receive {
+            color: #fbbf24;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 4px;
+            color: #e5e5e5;
+            box-sizing: border-box;
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #a3a3a3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔌 Socket.io WebSocket Test</h1>
+        
+        <div class="input-group">
+            <label>WebSocket URL:</label>
+            <input type="text" id="wsUrl" value="http://localhost:3001/chat" placeholder="http://localhost:3001/chat">
+        </div>
+
+        <div class="input-group">
+            <label>Session ID (optional):</label>
+            <input type="text" id="sessionId" placeholder="Leave empty to create new session">
+        </div>
+
+        <div id="status" class="status disconnected">❌ Disconnected</div>
+
+        <div>
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <div class="input-group">
+            <label>Message Content:</label>
+            <textarea id="messageContent" rows="3" placeholder="Type your message here...">Hello, test message!</textarea>
+        </div>
+
+        <div>
+            <button onclick="sendMessage()" id="sendBtn" disabled>Send Message</button>
+            <button onclick="sendTyping()" id="typingBtn" disabled>Send Typing Indicator</button>
+            <button onclick="stopTyping()" id="stopTypingBtn" disabled>Stop Typing</button>
+        </div>
+
+        <h3>Event Log:</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let socket = null;
+        const API_BASE = 'http://localhost:3001';
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function updateStatus(connected) {
+            const statusDiv = document.getElementById('status');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const sendBtn = document.getElementById('sendBtn');
+            const typingBtn = document.getElementById('typingBtn');
+            const stopTypingBtn = document.getElementById('stopTypingBtn');
+
+            if (connected) {
+                statusDiv.className = 'status connected';
+                statusDiv.textContent = '✅ Connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                sendBtn.disabled = false;
+                typingBtn.disabled = false;
+                stopTypingBtn.disabled = false;
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.textContent = '❌ Disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                sendBtn.disabled = true;
+                typingBtn.disabled = true;
+                stopTypingBtn.disabled = true;
+            }
+        }
+
+        function connect() {
+            const wsUrl = document.getElementById('wsUrl').value;
+            const sessionId = document.getElementById('sessionId').value;
+
+            if (socket) {
+                socket.disconnect();
+            }
+
+            log(`Connecting to ${wsUrl}...`, 'info');
+            
+            const query = sessionId ? { sessionId } : {};
+            
+            socket = io(wsUrl, {
+                query: query,
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 5,
+            });
+
+            socket.on('connect', () => {
+                log('✅ Connected successfully!', 'success');
+                log(`Socket ID: ${socket.id}`, 'info');
+                updateStatus(true);
+            });
+
+            socket.on('disconnect', (reason) => {
+                log(`❌ Disconnected: ${reason}`, 'error');
+                updateStatus(false);
+            });
+
+            socket.on('connect_error', (error) => {
+                log(`❌ Connection error: ${error.message}`, 'error');
+                updateStatus(false);
+            });
+
+            socket.on('streamChunk', (chunk) => {
+                log(`📥 Stream chunk: ${chunk}`, 'receive');
+            });
+
+            socket.on('streamComplete', (message) => {
+                log(`✅ Stream complete: ${JSON.stringify(message, null, 2)}`, 'success');
+            });
+
+            socket.on('userOnline', (data) => {
+                log(`👤 User online: ${JSON.stringify(data)}`, 'info');
+            });
+
+            socket.on('typing', (data) => {
+                log(`⌨️ Typing: ${JSON.stringify(data)}`, 'info');
+            });
+
+            socket.on('error', (error) => {
+                log(`❌ Error: ${JSON.stringify(error)}`, 'error');
+            });
+        }
+
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+                log('Disconnected manually', 'info');
+                updateStatus(false);
+            }
+        }
+
+        function sendMessage() {
+            if (!socket || !socket.connected) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            const content = document.getElementById('messageContent').value;
+            const sessionId = document.getElementById('sessionId').value;
+
+            if (!content.trim()) {
+                log('❌ Message cannot be empty', 'error');
+                return;
+            }
+
+            const payload = sessionId ? { sessionId, content } : { content };
+            
+            log(`📤 Sending message: ${JSON.stringify(payload)}`, 'info');
+            socket.emit('sendMessage', payload);
+        }
+
+        function sendTyping() {
+            if (!socket || !socket.connected) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            const sessionId = document.getElementById('sessionId').value;
+            if (!sessionId) {
+                log('❌ Session ID required for typing indicator', 'error');
+                return;
+            }
+
+            log('⌨️ Sending typing indicator...', 'info');
+            socket.emit('typing', { sessionId, isTyping: true });
+        }
+
+        function stopTyping() {
+            if (!socket || !socket.connected) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            const sessionId = document.getElementById('sessionId').value;
+            if (!sessionId) {
+                log('❌ Session ID required', 'error');
+                return;
+            }
+
+            log('⌨️ Stopping typing indicator...', 'info');
+            socket.emit('stopTyping', { sessionId });
+        }
+
+        // Auto-connect on load
+        window.addEventListener('load', () => {
+            log('WebSocket Test Page Loaded', 'info');
+            log('Click "Connect" to start testing', 'info');
+        });
+    </script>
+</body>
+</html>
+
